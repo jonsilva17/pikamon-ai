@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Pokémon Team Builder</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="demo-banner">For demonstration purposes only</div>
+
+    <div class="container">
+        
+
+
+
+    <div class="container">
+
+        <div class="sidebar-pokemon">
+            <img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/25.png" alt="Pikachu">
+            <span>Pikachu AI Mascot</span>
+        </div>
+
+        <div class="main-content">
+            <h1>Pokémon Counter-Team Builder</h1>
+            <p class="subtitle">Powered by Gemini AI</p>
+            
+            <div class="input-section">
+                <label for="opponent-input">Enter Opponent's Pokémon (separated by commas):</label>
+                <input type="text" id="opponent-input" placeholder="e.g., Charizard, Gengar, Dragonite">
+                <button id="suggest-btn">Get Counter Team</button>
+            </div>
+
+            <div id="loading" class="hidden">Thinking of the perfect strategy...</div>
+            <div id="error-message" class="hidden"></div>
+
+            <div id="result-section" class="hidden">
+                <h2>Your Suggested Counter-Team:</h2>
+                <div id="team-container"></div>
+            </div>
+        </div>
+
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
