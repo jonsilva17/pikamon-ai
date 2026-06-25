@@ -26,7 +26,7 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
 # 4. Inicializa o cliente oficial do Gemini
-client = genai.Client()
+client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
 # MUDANÇA IMPORTANTE: Definir o caminho da BD para a pasta /tmp para ter permissões de escrita no Render
 DB_PATH = "/tmp/utilizadores.db"
