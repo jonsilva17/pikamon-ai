@@ -1,6 +1,6 @@
-Flask
+flask
 flask-cors
+google-generativeai
 python-dotenv
-google-genai
-pydantic
+werkzeug
 gunicorn
