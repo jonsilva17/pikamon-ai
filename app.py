@@ -1,23 +1,57 @@
 import os
 import json
 import sqlite3
+import datetime # Necessário para definir a validade do token
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
-# Mudámos para a biblioteca do Groq (Sem bloqueios no Render!)
 from groq import Groq
 from werkzeug.security import generate_password_hash, check_password_hash
+# Importa a biblioteca JWT
+import jwt
+from functools import wraps
 
 load_dotenv()
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
-# Inicializa o cliente do Groq
 GROQ_KEY = os.environ.get("GROQ_API_KEY")
 client = Groq(api_key=GROQ_KEY)
 
+# Chave secreta para encriptar os tokens. Guarda uma senha segura no teu .env ou Render!
+JWT_SECRET = os.environ.get("JWT_SECRET", "uma_chave_super_secreta_e_longa_123!")
+
 DB_PATH = "/tmp/utilizadores.db"
+
+# ==========================================
+# FUNÇÃO (DECORATOR) PARA PROTEGER ROTAS
+# ==========================================
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+        # O token será enviado no Header 'Authorization' do Frontend
+        if 'Authorization' in request.headers:
+            auth_header = request.headers['Authorization']
+            if auth_header.startswith("Bearer "):
+                token = auth_header.split(" ")[1]
+
+        if not token:
+            return jsonify({"error": "Token em falta! Inicie sessão novamente."}), 401
+
+        try:
+            # Desencripta e valida o token
+            data = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+            current_user = data["username"]
+        except jwt.ExpiredSignatureError:
+            return jsonify({"error": "O seu passe expirou. Faça login de novo."}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({"error": "Token inválido!"}), 401
+
+        return f(current_user, *args, **kwargs)
+    return decorated
+
 
 def init_db():
     conn = sqlite3.connect(DB_PATH, timeout=10)
@@ -42,89 +76,39 @@ def init_db():
 
 init_db()
 
-# ==========================================
-# ROTA: GERADOR DE EQUIPAS COM GROQ (LLAMA 3)
-# ==========================================
+# Rota do Groq mantém-se livre para qualquer um usar (ou podes pôr @token_required se quiseres)
 @app.route('/suggest-team', methods=['POST'])
 def suggest_team():
     try:
         data = request.get_json()
         opponent_team = data.get('opponent_team', [])
-
         if not opponent_team:
             return jsonify({"error": "Nenhum Pokémon adversário foi enviado."}), 400
 
         opponent_list_str = ", ".join(opponent_team)
-
         prompt = f"""
         O oponente está usando o seguinte time de Pokémon: {opponent_list_str}.
-        Crie um time de contra-ataque (counter-team) perfeito com até 6 Pokémon para vencê-los.
-        Para cada Pokémon sugerido, explique brevemente a estratégia/motivo da escolha.
-        
-        Responda APENAS no formato JSON abaixo, sem qualquer texto, saudação ou aspas de bloco extra antes ou depois:
+        Crie um time de contra-ataque perfeito com até 6 Pokémon para vencê-los.
+        Responda APENAS no formato JSON abaixo:
         {{
             "suggested_team": [
-                {{"pokemon": "Nome do Pokemon", "reason": "Explicação em português"}}
+                {{"pokemon": "Nome", "reason": "Explicação"}}
             ]
         }}
         """
-
-        # Usamos o modelo Llama 3 que é ultra rápido e livre de bloqueios 403
         completion = client.chat.completions.create(
             model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
+            messages=[{"role": "user", "content": prompt}],
             temperature=0.5
         )
-
-        response_text = completion.choices[0].message.content.strip()
-
-        if not response_text:
-            raise ValueError("O modelo retornou uma resposta vazia.")
-
-        ai_data = json.loads(response_text)
-        return jsonify(ai_data)
-
+        return jsonify(json.loads(completion.choices[0].message.content.strip()))
     except Exception as e:
-        print(f"\n[ERRO NO SERVIDOR] Detalhes: {e}\n")
-        return jsonify({"error": "Ocorreu um erro temporário no processamento. Por favor, tente de novo."}), 500
+        return jsonify({"error": "Erro no processamento."}), 500
 
 
 # ==========================================
-# ROTAS: REGISTO, LOGIN E HISTÓRICO
+# ROTA DE LOGIN (GERA O TOKEN JWT)
 # ==========================================
-@app.route('/register', methods=['POST'])
-@app.route('/criar-conta', methods=['POST'])
-def register():
-    try:
-        data = request.get_json()
-        if not data: return jsonify({"error": "Dados inválidos."}), 400
-
-        username = str(data.get('username', '')).strip()
-        password = str(data.get('password', '')).strip()
-
-        if not username or not password:
-            return jsonify({"error": "Utilizador e password são obrigatórios."}), 400
-
-        conn = sqlite3.connect(DB_PATH, timeout=10)
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
-        if cursor.fetchone():
-            conn.close()
-            return jsonify({"error": "Este nome de utilizador já existe!"}), 400
-        
-        hashed_password = generate_password_hash(password)
-        cursor.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", (username, hashed_password))
-        conn.commit()
-        conn.close()
-        
-        return jsonify({"message": "Utilizador registado com sucesso! 🎉"})
-    except Exception as e:
-        print(f"[ERRO NO REGISTO]: {e}")
-        return jsonify({"error": f"Erro interno: {str(e)}"}), 500
-
 @app.route('/login', methods=['POST'])
 @app.route('/entrar', methods=['POST'])
 def login():
@@ -142,35 +126,80 @@ def login():
         if not result or not check_password_hash(result[0], password):
             return jsonify({"error": "Utilizador ou password incorretos."}), 400
         
-        return jsonify({"message": "Login efetuado com sucesso! 🚀", "user": username})
+        # LOGIN CORRETO -> GERAR TOKEN JWT (Válido por 24 horas)
+        token = jwt.encode({
+            "username": username,
+            "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+        }, JWT_SECRET, algorithm="HS256")
+        
+        # Devolvemos o token para o Frontend guardar
+        return jsonify({
+            "message": "Login efetuado com sucesso! 🚀",
+            "token": token,
+            "user": username
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+# ==========================================
+# ROTAS PROTEGIDAS COM JWT
+# ==========================================
+
 @app.route('/guardar-equipa', methods=['POST'])
-def guardar_equipa():
+@token_required
+def guardar_equipa(current_user): # Recebe o utilizador vindo do Token
     try:
         data = request.get_json()
-        username = data.get('username')
         equipa = data.get('equipa')
 
         conn = sqlite3.connect(DB_PATH, timeout=10)
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO equipas_guardadas (username, equipa_json) VALUES (?, ?)", (username, str(equipa)))
+        # Usamos o 'current_user' extraído do Token por segurança!
+        cursor.execute("INSERT INTO equipas_guardadas (username, equipa_json) VALUES (?, ?)", (current_user, str(equipa)))
         conn.commit()
         conn.close()
         return jsonify({"message": "Equipa guardada com sucesso! 💾"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/historico/<username>', methods=['GET'])
-def obter_historico(username):
+
+@app.route('/historico', methods=['GET']) # Removemos o <username> da URL por segurança
+@token_required
+def obter_historico(current_user):
     try:
         conn = sqlite3.connect(DB_PATH, timeout=10)
         cursor = conn.cursor()
-        cursor.execute("SELECT equipa_json, data_criacao FROM equipas_guardadas WHERE username = ? ORDER BY data_criacao DESC", (username,))
+        # O utilizador só consegue ver o SEU próprio histórico
+        cursor.execute("SELECT equipa_json, data_criacao FROM equipas_guardadas WHERE username = ? ORDER BY data_criacao DESC", (current_user,))
         rows = cursor.fetchall()
         conn.close()
         return jsonify({"historico": [{"equipa": row[0], "data": row[1]} for row in rows]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/register', methods=['POST'])
+@app.route('/criar-conta', methods=['POST'])
+def register():
+    try:
+        data = request.get_json()
+        username = str(data.get('username', '')).strip()
+        password = str(data.get('password', '')).strip()
+        if not username or not password: return jsonify({"error": "Campos obrigatórios."}), 400
+
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
+        if cursor.fetchone():
+            conn.close()
+            return jsonify({"error": "Utilizador já existe!"}), 400
+        
+        hashed_password = generate_password_hash(password)
+        cursor.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", (username, hashed_password))
+        conn.commit()
+        conn.close()
+        return jsonify({"message": "Utilizador registado! 🎉"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
