@@ -71,7 +71,7 @@ def suggest_team():
 
         # Usamos o modelo Llama 3 que é ultra rápido e livre de bloqueios 403
         completion = client.chat.completions.create(
-            model="llama3-8b-8192",
+            model="llama-3.1-8b-instant",
             messages=[
                 {"role": "user", "content": prompt}
             ],
