@@ -28,9 +28,13 @@ CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 # 4. Inicializa o cliente oficial do Gemini
 client = genai.Client()
 
+# MUDANÇA IMPORTANTE: Definir o caminho da BD para a pasta /tmp para ter permissões de escrita no Render
+DB_PATH = "/tmp/utilizadores.db"
+
 # 5. CONFIGURAÇÃO DA BASE DE DADOS (Cria as tabelas se não existirem)
 def init_db():
-    conn = sqlite3.connect("utilizadores.db")
+    # Adicionado timeout de 10 segundos para o Gunicorn não bloquear o SQLite
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cursor = conn.cursor()
     
     # Tabela de utilizadores
@@ -105,7 +109,7 @@ def suggest_team():
 # ==========================================
 
 @app.route('/register', methods=['POST'])
-@app.route('/criar-conta', methods=['POST'])  # <-- ADICIONA ESTA LINHA AQUI
+@app.route('/criar-conta', methods=['POST'])
 def register():
     try:
         data = request.get_json()
@@ -118,7 +122,8 @@ def register():
         if not username or not password:
             return jsonify({"error": "Utilizador e password são obrigatórios."}), 400
 
-        conn = sqlite3.connect("utilizadores.db")
+        # MUDANÇA AQUI: Usa o caminho DB_PATH (/tmp/) com timeout
+        conn = sqlite3.connect(DB_PATH, timeout=10)
         cursor = conn.cursor()
         
         # Verificar se o utilizador já existe
@@ -127,7 +132,7 @@ def register():
             conn.close()
             return jsonify({"error": "Este nome de utilizador já existe!"}), 400
         
-        # MUDANÇA AQUI: Encriptação nova, limpa e segura (sem bug de bytes)
+        # Encriptação segura
         hashed_password = generate_password_hash(password)
         
         cursor.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", (username, hashed_password))
@@ -141,21 +146,21 @@ def register():
 
 
 @app.route('/login', methods=['POST'])
-@app.route('/entrar', methods=['POST'])  # <-- ADICIONA ESTA LINHA AQUI TAMBÉM
+@app.route('/entrar', methods=['POST'])
 def login():
     try:
         data = request.get_json()
         username = str(data.get('username', '')).strip()
         password = str(data.get('password', '')).strip()
 
-        conn = sqlite3.connect("utilizadores.db")
+        # MUDANÇA AQUI: Usa o caminho DB_PATH (/tmp/) com timeout
+        conn = sqlite3.connect(DB_PATH, timeout=10)
         cursor = conn.cursor()
         
         cursor.execute("SELECT password_hash FROM users WHERE username = ?", (username,))
         result = cursor.fetchone()
         conn.close()
         
-        # MUDANÇA AQUI: Verificação com a nova biblioteca
         if not result or not check_password_hash(result[0], password):
             return jsonify({"error": "Utilizador ou password incorretos."}), 400
         
@@ -180,10 +185,10 @@ def guardar_equipa():
         if not username or not equipa:
             return jsonify({"error": "Utilizador ou equipa em falta nos dados enviados."}), 400
 
-        # Forçar a conversão para string para o SQLite não reclamar
         equipa_string = str(equipa)
 
-        conn = sqlite3.connect("utilizadores.db")
+        # MUDANÇA AQUI: Usa o caminho DB_PATH (/tmp/) com timeout
+        conn = sqlite3.connect(DB_PATH, timeout=10)
         cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO equipas_guardadas (username, equipa_json) VALUES (?, ?)", 
@@ -201,7 +206,8 @@ def guardar_equipa():
 @app.route('/historico/<username>', methods=['GET'])
 def obter_historico(username):
     try:
-        conn = sqlite3.connect("utilizadores.db")
+        # MUDANÇA AQUI: Usa o caminho DB_PATH (/tmp/) com timeout
+        conn = sqlite3.connect(DB_PATH, timeout=10)
         cursor = conn.cursor()
         cursor.execute(
             "SELECT equipa_json, data_criacao FROM equipas_guardadas WHERE username = ? ORDER BY data_criacao DESC",
