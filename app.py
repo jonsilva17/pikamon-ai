@@ -105,6 +105,7 @@ def suggest_team():
 # ==========================================
 
 @app.route('/register', methods=['POST'])
+@app.route('/criar-conta', methods=['POST'])  # <-- ADICIONA ESTA LINHA AQUI
 def register():
     try:
         data = request.get_json()
@@ -140,6 +141,7 @@ def register():
 
 
 @app.route('/login', methods=['POST'])
+@app.route('/entrar', methods=['POST'])  # <-- ADICIONA ESTA LINHA AQUI TAMBÉM
 def login():
     try:
         data = request.get_json()
