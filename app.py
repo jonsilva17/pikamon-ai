@@ -4,20 +4,18 @@ import sqlite3
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
-# Mudança na biblioteca para evitar o bloqueio 403 do Render
-import google.generativeai as genai
+# Mudámos para a biblioteca do Groq (Sem bloqueios no Render!)
+from groq import Groq
 from werkzeug.security import generate_password_hash, check_password_hash
 
-# Carrega as variáveis do arquivo .env
 load_dotenv()
 
-# Inicializa o Flask e ativa o CORS
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
-# Configura o Gemini com a biblioteca clássica (evita o bloqueio de IP)
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
-genai.configure(api_key=GEMINI_KEY)
+# Inicializa o cliente do Groq
+GROQ_KEY = os.environ.get("GROQ_API_KEY")
+client = Groq(api_key=GROQ_KEY)
 
 DB_PATH = "/tmp/utilizadores.db"
 
@@ -45,7 +43,7 @@ def init_db():
 init_db()
 
 # ==========================================
-# ROTA: GERADOR DE EQUIPAS POKÉMON (CORRIGIDA)
+# ROTA: GERADOR DE EQUIPAS COM GROQ (LLAMA 3)
 # ==========================================
 @app.route('/suggest-team', methods=['POST'])
 def suggest_team():
@@ -58,13 +56,12 @@ def suggest_team():
 
         opponent_list_str = ", ".join(opponent_team)
 
-        # Forçamos a IA a responder em JSON puro de forma compatível
         prompt = f"""
         O oponente está usando o seguinte time de Pokémon: {opponent_list_str}.
         Crie um time de contra-ataque (counter-team) perfeito com até 6 Pokémon para vencê-los.
         Para cada Pokémon sugerido, explique brevemente a estratégia/motivo da escolha.
         
-        Responda ESTRUTURADAMENTE e APENAS no formato JSON abaixo, sem texto antes ou depois:
+        Responda APENAS no formato JSON abaixo, sem qualquer texto, saudação ou aspas de bloco extra antes ou depois:
         {{
             "suggested_team": [
                 {{"pokemon": "Nome do Pokemon", "reason": "Explicação em português"}}
@@ -72,17 +69,21 @@ def suggest_team():
         }}
         """
 
-        # Usamos o modelo 1.5-flash que é ultra estável em servidores web
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = model.generate_content(
-            prompt,
-            generation_config={"response_mime_type": "application/json"}
+        # Usamos o modelo Llama 3 que é ultra rápido e livre de bloqueios 403
+        completion = client.chat.completions.create(
+            model="llama3-8b-8192",
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.5
         )
 
-        if not response.text:
-            raise ValueError("O Gemini retornou uma resposta vazia.")
+        response_text = completion.choices[0].message.content.strip()
 
-        ai_data = json.loads(response.text)
+        if not response_text:
+            raise ValueError("O modelo retornou uma resposta vazia.")
+
+        ai_data = json.loads(response_text)
         return jsonify(ai_data)
 
     except Exception as e:
