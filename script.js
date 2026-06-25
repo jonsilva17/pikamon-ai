@@ -1,66 +1,117 @@
-document.getElementById('suggest-btn').addEventListener('click', async () => {
-    const inputField = document.getElementById('opponent-input');
-    const loadingDiv = document.getElementById('loading');
-    const errorDiv = document.getElementById('error-message');
-    const resultSection = document.getElementById('result-section');
-    const teamContainer = document.getElementById('team-container');
+// Aponta para a porta correta do teu Python Local
+const API_URL = "https://pikamon-ai.onrender.com";
 
-    // Separa os nomes por vírgula e limpa espaços extras
-    const opponentTeam = inputField.value.split(',').map(name => name.trim()).filter(name => name.length > 0);
+document.getElementById("suggest-btn").addEventListener("click", async () => {
+    const input = document.getElementById("opponent-input").value;
+    const loading = document.getElementById("loading");
+    const errorMsg = document.getElementById("error-message");
+    const resultSection = document.getElementById("result-section");
+    const teamContainer = document.getElementById("team-container");
+
+    // Limpar estados anteriores
+    errorMsg.classList.add("hidden");
+    resultSection.classList.add("hidden");
+    teamContainer.innerHTML = "";
+
+    // Criar a lista de Pokémons separados por vírgula
+    const opponentTeam = input.split(",").map(p => p.trim()).filter(p => p.length > 0);
 
     if (opponentTeam.length === 0) {
-        alert("Por favor, digite pelo menos um Pokémon do oponente!");
+        errorMsg.innerText = "Por favor, introduz pelo menos um Pokémon adversário.";
+        errorMsg.classList.remove("hidden");
         return;
     }
 
-    // Reseta o estado visual dos resultados
-    loadingDiv.classList.remove('hidden');
-    errorDiv.classList.add('hidden');
-    resultSection.classList.add('hidden');
-    teamContainer.innerHTML = '';
+    loading.classList.remove("hidden");
 
     try {
-        // Envia a lista para o seu servidor Python Flask na porta 5000
-        const response = await fetch('http://127.0.0.1:5000/suggest-team', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
+        const response = await fetch(`${API_URL}/suggest-team`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ opponent_team: opponentTeam })
         });
 
+        const data = await response.json();
+
         if (!response.ok) {
-            throw new Error("Falha ao carregar o time. O seu servidor Flask está ligado?");
+            throw new Error(data.error || "Erro ao gerar equipa.");
         }
 
-        const data = await response.json();
-        
-        // Monta os cards na tela para cada Pokémon retornado pelo Gemini
-        data.suggested_team.forEach(item => {
-            const card = document.createElement('div');
-            card.className = 'pokemon-card';
-            
-            // Padroniza o nome para buscar a imagem na API
-            const formattedName = item.pokemon.toLowerCase().trim().replace(/\s+/g, '-');
-            const imageUrl = `https://img.pokemondb.net/sprites/home/normal/${formattedName}.png`;
+        // Mostrar os resultados da IA na tela
+        loading.classList.add("hidden");
+        resultSection.classList.remove("hidden");
 
+        // Guardar a equipa atual numa variável global para podermos salvar depois
+        window.equipaGeradaAtual = data.suggested_team;
+
+        data.suggested_team.forEach(item => {
+            // Transformar o nome num formato limpo para a API de imagens
+            const pokemonNomeLimpo = item.pokemon.toLowerCase().trim().replace(" ", "-");
+            
+            // Link oficial da imagem
+            const imagemUrl = `https://img.pokemondb.net/sprites/home/normal/${pokemonNomeLimpo}.png`;
+
+            const card = document.createElement("div");
+            card.className = "pokemon-card";
             card.innerHTML = `
-                <div class="pokemon-header">
-                    <img src="${imageUrl}" alt="${item.pokemon}" class="pokemon-sprite" onerror="this.src='https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/0.png'">
-                    <div class="pokemon-name">${item.pokemon}</div>
-                </div>
-                <div class="pokemon-reason">${item.reason}</div>
+                <img src="${imagemUrl}" alt="${item.pokemon}" style="width: 120px; height: 120px; object-fit: contain; display: block; margin: 0 auto 10px;" onerror="this.src='https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/0.png';">
+                <h3>🦖 ${item.pokemon}</h3>
+                <p>${item.reason}</p>
             `;
             teamContainer.appendChild(card);
         });
 
-        // Exibe a seção de resultados na tela
-        resultSection.classList.remove('hidden');
+        // Adicionar o Botão de Guardar se o utilizador estiver logado
+        const logado = localStorage.getItem("utilizadorLogado");
+        if (logado) {
+            // Remove botão antigo se existir para não duplicar
+            const botaoAntigo = document.getElementById("save-team-btn");
+            if (botaoAntigo) botaoAntigo.remove();
+
+            const saveBtn = document.createElement("button");
+            saveBtn.id = "save-team-btn";
+            saveBtn.innerText = "💾 Guardar esta Equipa no meu Perfil";
+            saveBtn.style.marginTop = "20px";
+            saveBtn.style.backgroundColor = "#28a745";
+            saveBtn.style.color = "white";
+            saveBtn.style.padding = "10px 20px";
+            saveBtn.style.border = "none";
+            saveBtn.style.borderRadius = "5px";
+            saveBtn.style.cursor = "pointer";
+            
+            saveBtn.addEventListener("click", async () => {
+                try {
+                    // MELHORIA: Juntamos os oponentes pesquisados e os counters num único pacote JSON
+                    const dadosParaGuardar = {
+                        oponentes: input, // Guarda o texto original que pesquisaste (ex: "Charizard, Pikachu")
+                        counters: window.equipaGeradaAtual
+                    };
+
+                    const res = await fetch(`${API_URL}/guardar-equipa`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            username: logado,
+                            equipa: JSON.stringify(dadosParaGuardar) // Envia o pacote completo estruturado
+                        })
+                    });
+                    
+                    const resData = await res.json();
+                    if (res.ok) {
+                        alert(resData.message); // Mensagem de sucesso do Python
+                    } else {
+                        alert("Erro do Servidor: " + resData.error);
+                    }
+                } catch (err) {
+                    alert("Erro de Rede: Não foi possível contactar o backend.");
+                }
+            });
+            resultSection.appendChild(saveBtn);
+        }
 
     } catch (error) {
-        errorDiv.textContent = error.message;
-        errorDiv.classList.remove('hidden');
-    } finally {
-        loadingDiv.classList.add('hidden');
-    }
-});
+        loading.classList.add("hidden");
+        errorMsg.innerText = error.message;
+        errorMsg.classList.remove("hidden");
+    } // <-- Fecha o bloco catch principal de forma correta
+}); // <-- Fecha a função do addEventListener do botão suggest-btn
