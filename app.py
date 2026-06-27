@@ -140,7 +140,9 @@ def google_login():
 def google_callback():
     try:
         token = oauth.google.authorize_access_token()
-        user_info = oauth.google.parse_id_token(token)
+        
+        # MODIFICA APENAS ESTA LINHA ABAIXO:
+        user_info = oauth.google.parse_id_token(token, claims_options={"nonce": {"essential": False}})
 
         google_id = user_info["sub"]
         email = user_info.get("email", "")
@@ -174,10 +176,11 @@ def google_callback():
 
         conn.close()
 
+        # Correção extra para compatibilidade com versões novas do PyJWT (ignorar utcnow)
         jwt_token = jwt.encode(
             {
                 "username": username,
-                "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=24),
+                "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=24),
             },
             JWT_SECRET,
             algorithm="HS256",
