@@ -2,7 +2,10 @@ import os
 import json
 import sqlite3
 import datetime # Necessário para definir a validade do token
-from flask import Flask, request, jsonify, redirect
+import secrets
+import requests
+from urllib.parse import urlencode
+from flask import Flask, request, jsonify, redirect, session
 from flask_cors import CORS
 from dotenv import load_dotenv
 from groq import Groq
@@ -10,7 +13,6 @@ from werkzeug.security import generate_password_hash, check_password_hash
 # Importa a biblioteca JWT
 import jwt
 from functools import wraps
-from authlib.integrations.flask_client import OAuth
 
 load_dotenv()
 
@@ -29,14 +31,7 @@ GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:4000/auth/google/callback")
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")
 
-oauth = OAuth(app)
-oauth.register(
-    name="google",
-    client_id=GOOGLE_CLIENT_ID,
-    client_secret=GOOGLE_CLIENT_SECRET,
-    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-    client_kwargs={"scope": "openid email profile"},
-)
+
 
 DB_PATH = "/tmp/utilizadores.db"
 
@@ -133,22 +128,54 @@ def suggest_team():
 # ==========================================
 @app.route('/auth/google/login')
 def google_login():
-    return oauth.google.authorize_redirect(GOOGLE_REDIRECT_URI)
+    state = secrets.token_urlsafe(32)
+    session['google_oauth_state'] = state
+
+    params = {
+        'client_id': GOOGLE_CLIENT_ID,
+        'redirect_uri': GOOGLE_REDIRECT_URI,
+        'response_type': 'code',
+        'scope': 'openid email profile',
+        'state': state,
+    }
+    url = 'https://accounts.google.com/o/oauth2/v2/auth?' + urlencode(params)
+    return redirect(url)
 
 
 @app.route('/auth/google/callback')
 def google_callback():
     try:
-        token = oauth.google.authorize_access_token()
-        
-        # ALTERAÇÃO AQUI: Passamos a 'request' antes do token
-        # Isto obriga a Authlib a extrair o nonce sozinha diretamente do Flask
-        user_info = oauth.google.parse_id_token(request, token)
+        saved_state = session.pop('google_oauth_state', None)
+        state = request.args.get('state')
+        if not state or state != saved_state:
+            return jsonify({"error": "Estado inválido. Tente novamente."}), 400
 
-        google_id = user_info["sub"]
-        email = user_info.get("email", "")
-        name = user_info.get("name", "")
-        avatar = user_info.get("picture", "")
+        code = request.args.get('code')
+        if not code:
+            return jsonify({"error": "Código de autorização ausente."}), 400
+
+        resp = requests.post('https://oauth2.googleapis.com/token', data={
+            'code': code,
+            'client_id': GOOGLE_CLIENT_ID,
+            'client_secret': GOOGLE_CLIENT_SECRET,
+            'redirect_uri': GOOGLE_REDIRECT_URI,
+            'grant_type': 'authorization_code',
+        }, timeout=10)
+        resp.raise_for_status()
+        token_json = resp.json()
+
+        user_resp = requests.get(
+            'https://www.googleapis.com/oauth2/v2/userinfo',
+            headers={'Authorization': f'Bearer {token_json["access_token"]}'},
+            timeout=10,
+        )
+        user_resp.raise_for_status()
+        user_info = user_resp.json()
+
+        google_id = user_info['id']
+        email = user_info.get('email', '')
+        name = user_info.get('name', '')
+        avatar = user_info.get('picture', '')
 
         conn = sqlite3.connect(DB_PATH, timeout=10)
         cursor = conn.cursor()
@@ -189,6 +216,8 @@ def google_callback():
         redirect_url = f"{FRONTEND_URL}/?token={jwt_token}&user={username}"
         return redirect(redirect_url)
 
+    except requests.RequestException as e:
+        return jsonify({"error": f"Falha na comunicação com o Google: {str(e)}"}), 500
     except Exception as e:
         return jsonify({"error": f"Google login failed: {str(e)}"}), 500
 
