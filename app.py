@@ -22,6 +22,7 @@ client = Groq(api_key=GROQ_KEY)
 
 # Chave secreta para encriptar os tokens. Guarda uma senha segura no teu .env ou Render!
 JWT_SECRET = os.environ.get("JWT_SECRET", "uma_chave_super_secreta_e_longa_123!")
+app.secret_key = JWT_SECRET
 
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
