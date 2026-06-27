@@ -144,6 +144,7 @@ def google_login():
         'response_type': 'code',
         'scope': 'openid email profile',
         'state': state,
+        'prompt': 'select_account'  # 👈 ESTA LINHA OBRIGA O GOOGLE A PERGUNTAR QUAL A CONTA
     }
     url = 'https://accounts.google.com/o/oauth2/v2/auth?' + urlencode(params)
     return redirect(url)
