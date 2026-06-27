@@ -67,19 +67,26 @@ def token_required(f):
 def init_db():
     conn = sqlite3.connect(DB_PATH, timeout=10)
     cursor = conn.cursor()
+    
+    # 1. Criamos a tabela já com TODAS as colunas necessárias incluídas desde o primeiro segundo
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL
+            password_hash TEXT NOT NULL,
+            google_id TEXT UNIQUE,
+            email TEXT,
+            avatar TEXT
         )
     """)
-    # Add Google OAuth columns if missing (safe migration for existing DBs)
+    
+    # Tentativa de migração caso a tabela antiga ainda teime em existir
     for col in ["google_id TEXT UNIQUE", "email TEXT", "avatar TEXT"]:
         try:
             cursor.execute(f"ALTER TABLE users ADD COLUMN {col}")
         except sqlite3.OperationalError:
             pass
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS equipas_guardadas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
