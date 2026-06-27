@@ -2,7 +2,7 @@ import os
 import json
 import sqlite3
 import datetime # Necessário para definir a validade do token
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, redirect
 from flask_cors import CORS
 from dotenv import load_dotenv
 from groq import Groq
@@ -10,6 +10,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 # Importa a biblioteca JWT
 import jwt
 from functools import wraps
+from authlib.integrations.flask_client import OAuth
 
 load_dotenv()
 
@@ -21,6 +22,20 @@ client = Groq(api_key=GROQ_KEY)
 
 # Chave secreta para encriptar os tokens. Guarda uma senha segura no teu .env ou Render!
 JWT_SECRET = os.environ.get("JWT_SECRET", "uma_chave_super_secreta_e_longa_123!")
+
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
+GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:4000/auth/google/callback")
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+
+oauth = OAuth(app)
+oauth.register(
+    name="google",
+    client_id=GOOGLE_CLIENT_ID,
+    client_secret=GOOGLE_CLIENT_SECRET,
+    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+    client_kwargs={"scope": "openid email profile"},
+)
 
 DB_PATH = "/tmp/utilizadores.db"
 
@@ -63,6 +78,12 @@ def init_db():
             password_hash TEXT NOT NULL
         )
     """)
+    # Add Google OAuth columns if missing (safe migration for existing DBs)
+    for col in ["google_id TEXT UNIQUE", "email TEXT", "avatar TEXT"]:
+        try:
+            cursor.execute(f"ALTER TABLE users ADD COLUMN {col}")
+        except sqlite3.OperationalError:
+            pass
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS equipas_guardadas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,6 +125,68 @@ def suggest_team():
         return jsonify(json.loads(completion.choices[0].message.content.strip()))
     except Exception as e:
         return jsonify({"error": "Erro no processamento."}), 500
+
+
+# ==========================================
+# GOOGLE OAUTH LOGIN
+# ==========================================
+@app.route('/auth/google/login')
+def google_login():
+    return oauth.google.authorize_redirect(GOOGLE_REDIRECT_URI)
+
+
+@app.route('/auth/google/callback')
+def google_callback():
+    try:
+        token = oauth.google.authorize_access_token()
+        user_info = oauth.google.parse_id_token(token)
+
+        google_id = user_info["sub"]
+        email = user_info.get("email", "")
+        name = user_info.get("name", "")
+        avatar = user_info.get("picture", "")
+
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT username FROM users WHERE google_id = ?", (google_id,))
+        user = cursor.fetchone()
+
+        if user:
+            username = user[0]
+        else:
+            base_username = name.replace(" ", "_").lower() or email.split("@")[0]
+            username = base_username
+            suffix = 1
+            while True:
+                cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
+                if not cursor.fetchone():
+                    break
+                username = f"{base_username}_{suffix}"
+                suffix += 1
+
+            cursor.execute(
+                "INSERT INTO users (username, password_hash, google_id, email, avatar) VALUES (?, ?, ?, ?, ?)",
+                (username, "GOOGLE_AUTH", google_id, email, avatar),
+            )
+            conn.commit()
+
+        conn.close()
+
+        jwt_token = jwt.encode(
+            {
+                "username": username,
+                "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=24),
+            },
+            JWT_SECRET,
+            algorithm="HS256",
+        )
+
+        redirect_url = f"{FRONTEND_URL}/?token={jwt_token}&user={username}"
+        return redirect(redirect_url)
+
+    except Exception as e:
+        return jsonify({"error": f"Google login failed: {str(e)}"}), 500
 
 
 # ==========================================
