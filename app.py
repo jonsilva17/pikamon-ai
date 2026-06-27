@@ -141,8 +141,9 @@ def google_callback():
     try:
         token = oauth.google.authorize_access_token()
         
-        # MODIFICA APENAS ESTA LINHA ABAIXO:
-        user_info = oauth.google.parse_id_token(token, claims_options={"nonce": {"essential": False}})
+        # ALTERAÇÃO AQUI: Passamos a 'request' antes do token
+        # Isto obriga a Authlib a extrair o nonce sozinha diretamente do Flask
+        user_info = oauth.google.parse_id_token(request, token)
 
         google_id = user_info["sub"]
         email = user_info.get("email", "")
@@ -176,7 +177,6 @@ def google_callback():
 
         conn.close()
 
-        # Correção extra para compatibilidade com versões novas do PyJWT (ignorar utcnow)
         jwt_token = jwt.encode(
             {
                 "username": username,
